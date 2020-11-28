@@ -1,4 +1,3 @@
-# from models import Users, Admin, Agents, Loan, Emi
 from models import *
 import hashlib
 from flask import Flask, session, render_template, jsonify, request, redirect, make_response
@@ -6,14 +5,14 @@ from functools import wraps
 import jwt
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.datastructures import ImmutableMultiDict
+
 app = Flask(__name__)
-app.config["SQLALCHEMY_DATABASE_URI"] = "postgres://ljuqjpdsgznhki:3bb3de805e3ea4c2d99c05dcb71a2ac1f21829e2478e59f294b5aff0e07e131b@ec2-75-101-232-85.compute-1.amazonaws.com:5432/d7nj1f6lp4201v"
+
+app.config["SQLALCHEMY_DATABASE_URI"] = 'mysql+pymysql://kJf8oGRLqL:ZR2scz5rxu@remotemysql.com:3306/kJf8oGRLqL'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = True
 app.config['SECRET_KEY'] = 'thisisthesecretkey'
-app.config['salt'] = "5gz"
 
 db = SQLAlchemy(app)
-#
 
 
 def token_required(f):
@@ -21,35 +20,58 @@ def token_required(f):
     def decorated(*args, **kwargs):
         # http://127.0.0.1:5000/route?token=alshfjfjdklsfj89549834ur
         token = request.args.get('token')
-        body = request.get_json(silent=True)
+        http_args = request.args.to_dict()
+
         if not token:
-            return jsonify({'message': 'Token is missing!', 'token': request}), 403
+            return jsonify({"status": "false", 'message': 'Token is missing!'}), 401
+
+        body = request.get_json(silent=True)
         try:
             data = jwt.decode(
                 token, app.config['SECRET_KEY'], algorithm='HS256')
 
-            http_args = request.args.to_dict()
+            if not data:
+                return jsonify({"status": "false", 'message': 'No Data from Token'}), 401
 
-            try:
-                user = Users.query.filter_by(username=data['username']).first()
+            if(data['userType'] == 'Admin'):
+                try:
+                    admin = Admin.query.filter_by(
+                        username=data['username']).first()
 
-                if('id' in body):
-                    if(user.id == body['id']):
-                        http_args['selfProfile'] = True
-                if (user.user_type == 'Admin'):
+                    if(admin.id):
+                        http_args['isAdmin'] = True
+                        http_args['id'] = admin.id
 
-                    http_args['isAdmin'] = True
-                elif (user.user_type == 'Agent'):
+                except:
+                    return jsonify({"status": "false", 'message': 'No Admin Found'}), 401
 
-                    http_args['isAgent'] = True
-                else:
-                    http_args['isUser'] = True
-                request.args = ImmutableMultiDict(http_args)
-            except:
-                return jsonify({'message': 'No Data Found'}), 403
+            if(data['userType'] == 'Agent'):
+                try:
+                    agent = Agents.query.filter_by(
+                        username=data['username']).first()
+                    if(agent.id):
+                        http_args['isAgent'] = True
+                        http_args['id'] = agent.id
+
+                except:
+                    return jsonify({"status": "false", 'message': 'No Agent Found'}), 401
+
+            if(data['userType'] == 'User'):
+                try:
+                    usr = Users.query.filter_by(
+                        username=data['username']).first()
+
+                    if usr.id:
+                        http_args['isUser'] = True
+                        http_args['id'] = usr.id
+
+                except:
+                    return jsonify({"status": "false", 'message': 'No User Found'}), 401
+
         except:
-            return jsonify({'message': 'Token is invalid!'}), 403
+            return jsonify({"status": "false", 'message': 'Token is invalid!'}), 401
 
+        request.args = ImmutableMultiDict(http_args)
         return f(*args, **kwargs)
 
     return decorated
@@ -57,100 +79,133 @@ def token_required(f):
 
 @app.route('/')
 def index():
-    db.create_all()
-    db.session.commit()
-    return '/users'
+    return redirect('/users')
 
 
 @app.route('/users', methods=['GET', 'POST', 'PUT', "DELETE"])
 @token_required
 def users_get():
     body = request.get_json(silent=True)
-    users = Users.query.all()
     req = request.args.to_dict()
 
-    if('isAdmin' in req or 'isAgent' in req):
-        if(request.method == "POST"):
+    if(request.method == "POST"):
+        if('isAdmin' in req or 'isAgent' in req):
             hashed = hashedPassword(body['password'])
+            if not body['username'] or body['email']:
+                return jsonify({"status": "false", 'message': "enter username and email"}), 206
             try:
                 user = Users(username=body['username'],
                              email=body['email'], password=hashed)
             except:
-                return jsonify({'message': "Error Wwhile creating"})
+                return jsonify({"status": "false", 'message': "Error Wwhile creating"}), 501
             db.session.add(user)
             db.session.commit()
-            return jsonify({'user': "Created"})
+            return jsonify({'status': 'true', 'message': "Created"}), 201
+        return jsonify({'status': "false", 'message': "Unauthorized"}), 401
 
-    if('selfProfile' in req or 'Admin' in req):
-        if(request.method == "PUT"):
+    if(request.method == "PUT"):
+        if('selfProfile' in req or 'Admin' in req):
             hashed = hashedPassword(body['password'])
 
             if('id' not in body):
-                return jsonify({'message': 'Enter USer ID '})
-
+                return jsonify({"status": "false", 'message': 'Enter USer ID '}), 206
             try:
-                user = Users.update().where(users.c.id ==
-                                            body['id'], users.c.password == hashed).values(username="some name")
+                user = Users.update().where(
+                    user.c.id == body['id']).values(body)
             except:
-                return jsonify({'message': "Error Wwhile Updating"})
+                return jsonify({"status": "false", 'message': "Error Wwhile Updating"}), 501
             db.session.commit()
-            return jsonify({'user': "Updated"})
+            return jsonify({'status': 'true', 'message': "Updated"}), 200
+        return jsonify({'status': 'false', 'message': "Unauthorized"}), 401
 
-    if('Agent' in req or 'Admin' in req):
-        if(request.method == "DELETE"):
+    if(request.method == "DELETE"):
+        if('isAgent' in req or 'isAdmin' in req):
             if('id' not in body):
-                return jsonify({'message': 'Enter USer ID '})
+                return jsonify({"status": "false", 'message': 'Enter USer ID '}), 206
             try:
-                User.query.filter_by(id=body['id']).delete()
+                Users.query.filter_by(id=body['id']).delete()
             except:
-                return jsonify({'message': "Error Wwhile Deleting"})
+                return jsonify({"status": "false", 'message': "Error Wwhile Deleting"}), 501
             db.session.commit()
-            return jsonify({'user': "Deleted"})
+            return jsonify({'status': 'true', 'message': "Deleted"}), 200
+        return jsonify({'status': 'false', 'message': "UnAuthorized "}), 401
+    try:
+        users = Users.query.all()
+    except:
+        return jsonify({"status": "false", 'message': "No Data Found"}), 404
 
-    if('isAdmin' in req):
-        array = []
-        for user in users:
+    array = []
+    for user in users:
 
-            obj = {}
-            obj['id'] = user.id
-            obj['username'] = user.username
-            obj['email'] = user.email
-            obj['userType'] = user.user_type
+        obj = {}
+        obj['id'] = user.id
+        obj['username'] = user.username
+        obj['email'] = user.email
+        array.append(obj)
 
-            array.append(obj)
-
-        return jsonify({'USERS': array})
-    if('isUser' in req or 'isAgent' in req):
-        array = []
-        for user in users:
-
-            obj = {}
-            obj['id'] = user.id
-            obj['username'] = user.username
-            obj['email'] = user.email
-            array.append(obj)
-
-        return jsonify({'USERS': array})
+    return jsonify({'status': 'true', 'users': array})
 
 
 @app.route('/login', methods=["POST"])
 def login():
     auth = request.authorization
-
     body = request.get_json(silent=True)
 
     try:
         user = Users.query.filter_by(username=body['username']).first()
+        password = hashedPassword(body['password'])
+        if(password == user.password):
+            token = jwt.encode({'username': user.username,  'userType': 'User'},
+                               app.config['SECRET_KEY'], algorithm='HS256')
+
+            return jsonify({'status': 'true', 'token': token.decode()}), 200
+
     except:
-        return jsonify({'message': 'No Data Found'})
-    password = hashedPassword(body['password'])
-    if(password == user['password']):
-        token = jwt.encode({'username': user.username},
-                           app.config['SECRET_KEY'], algorithm='HS256')
+        return jsonify({"status": "false", 'message': 'No Data Found'})
 
-        return jsonify({'token': token.decode()})
+    return jsonify({"status": "false", 'message': "Could not verify!"}), 401
 
-    return make_response('Could not verify!', 401, {'WWW-Authenticate': 'Basic realm="Login Required"'})
+
+@app.route('/admin/login', methods=["POST"])
+def admin_login():
+    auth = request.authorization
+    body = request.get_json(silent=True)
+
+    try:
+        admin = Admin.query.filter_by(username=body['username']).first()
+        password = hashedPassword(body['password'])
+
+        if(password == admin.password):
+            token = jwt.encode({'username': admin.username, 'userType': 'Admin'},
+                               app.config['SECRET_KEY'], algorithm='HS256')
+
+            return jsonify({'status': 'true', 'token': token.decode()}), 200
+
+    except:
+        return jsonify({"status": "false", 'message': 'No Data Found'})
+
+    return jsonify({"status": "false", 'message': "Could not verify!"}), 401
+
+
+@app.route('/agent/login', methods=["POST"])
+def agent_login():
+    auth = request.authorization
+    body = request.get_json(silent=True)
+
+    try:
+        agent = Agents.query.filter_by(username=body['username']).first()
+        password = hashedPassword(body['password'])
+
+        if(password == agent.password):
+            token = jwt.encode({'username': agent.username, 'userType': 'Agent'},
+                               app.config['SECRET_KEY'], algorithm='HS256')
+
+            return jsonify({'status': 'true', 'token': token.decode()}), 200
+
+    except:
+        return jsonify({"status": "false", 'message': 'No Data Found'})
+
+    return jsonify({"status": "false", 'message': "Could not verify!"}), 401
 
 
 @app.route('/signup', methods=["POST"])
@@ -160,7 +215,7 @@ def signup():
 
     user = Users.query.filter_by(username=body['username']).first()
     if(user):
-        return jsonify({'Message': 'Give a Unique UserName'})
+        return jsonify({"status": "false", 'Message': 'Give a Unique UserName'}), 409
 
     password = hashedPassword(body['password'])
 
@@ -168,57 +223,110 @@ def signup():
         user = Users(username=body['username'],
                      email=body['email'], password=password)
     except:
-        return jsonify({'message': 'Internal Server Error'}), 500
+        return jsonify({"status": "false", 'message': 'Internal Server Error'}), 500
     db.session.add(user)
     db.session.commit()
-    token = jwt.encode({'username': user.username},
+    token = jwt.encode({'username': user.username, 'userType': 'User'},
                        app.config['SECRET_KEY'], algorithm='HS256')
-    return jsonify({'token': token.decode()})
+    return jsonify({'status': 'true', 'token': token.decode()}), 201
 
-    # return make_response('Could not verify!', 401, {'WWW-Authenticate' : 'Basic realm="Login Required"'})
+
+@app.route('/admin/signup', methods=["POST"])
+def admin_signup():
+
+    body = request.get_json(silent=True)
+
+    admin = Admin.query.filter_by(username=body['username']).first()
+    if(admin):
+        return jsonify({"status": "false", 'Message': 'Give a Unique username'}), 409
+
+    password = hashedPassword(body['password'])
+
+    try:
+        admin = Admin(username=body['username'],
+                      email=body['email'], password=password)
+    except:
+        return jsonify({"status": "false", 'message': 'Internal Server Error'}), 500
+    db.session.add(admin)
+    db.session.commit()
+    token = jwt.encode({'username': admin.username, 'userType': 'Admin'},
+                       app.config['SECRET_KEY'], algorithm='HS256')
+    return jsonify({'status': 'true', 'token': token.decode()}), 201
+
+
+@app.route('/agent/signup', methods=["POST"])
+def agent_signup():
+
+    body = request.get_json(silent=True)
+
+    agent = Agents.query.filter_by(username=body['username']).first()
+    if(agent):
+        return jsonify({"status": "false", 'Message': 'Give a Unique username'}), 409
+
+    password = hashedPassword(body['password'])
+
+    try:
+        agent = Agents(username=body['username'],
+                       email=body['email'], password=password)
+    except:
+        return jsonify({"status": "false", 'message': 'Internal Server Error'}), 500
+    db.session.add(agent)
+    db.session.commit()
+    token = jwt.encode({'username': agent.username, 'userType': 'Agent'},
+                       app.config['SECRET_KEY'], algorithm='HS256')
+    return jsonify({'status': 'true', 'token': token.decode()}), 201
 
 
 @app.route('/loan', methods=["POST", "GET", "PUT"])
+@token_required
 def loan():
-    #
-    return 'HELLO'
+    req = request.args.to_dict()
+
+    if 'isAdmin' in req:
+        try:
+            loans = Loan.query.all()
+        except:
+            return jsonify({"status": "false", 'message': 'No Data Found'}), 404
+    if 'isAgent' in req:
+        try:
+            print(req['id'], 'req')
+            loans = Loan.query.filter_by(agent_id=req['id']).all()
+        except:
+            return jsonify({"status": "false", 'message': 'No Data Found'}), 404
+    if 'isUser' in req:
+        try:
+            loans = Loan.query.filter_by(user_id=req['id']).all()
+        except:
+            return jsonify({"status": "false", 'message': 'No Data Found'}), 404
+
+    array = []
+    for each in loans:
+        obj = {}
+        obj['id'] = each.id
+        obj['name'] = each.name
+        obj['aadhar'] = each.aadhar
+        obj['purpose'] = each.purpose
+        obj['status'] = each.status
+        obj['isUserApproved'] = each.isUserApproved
+        obj['isAdminApproved'] = each.isAdminApproved
+        obj['ammount'] = each.ammount
+        obj['monthlyDeductAmmount'] = each.monthlyDeductAmmount
+        obj['createdAt'] = each.createdAt
+        obj['updatedAt'] = each.updatedAt
+
+        array.append(obj)
+
+    return jsonify({'status': 'true', 'loans': array}), 200
 
 
 def hashedPassword(password):
-    db_password = password + app.config['salt']
+    # db_password = password + app.config['salt']
+    db_password = password
+
     h = hashlib.sha256(db_password.encode())
     return h.hexdigest()
 
 
-try:
-    from models.UserModel import Users
-    # from models.AdminModel import Admin
-    # from models.AgentModel import Agents
-    # from models.EmiModel import Emi
-    # from models.LoanModel import Loan
-    print('Models imported')
-except ImportError as e:
-    print(e)
-
-
-@app.before_first_request
-def create_tables():
-    db.create_all()
-    db.session.commit()
-
-# with app.app_context():
-#     db.create_all()
-# db.session.commit()
-# admin = Users('admin', 'admin@example.com', hashedPassword('123'))
-# guest = Users('guest', 'guest@example.com', hashedPassword('123'))
-# db.session.add(admin)
-# db.session.add(guest)
-# db.session.commit()
-# users = Users.query.all()
-# print(users)
-
-
-# db.create_all()
 if __name__ == '__main__':
     app.run(debug=True)
     # app.run(port=5001, threaded=True, host=('0.0.0.0'))
